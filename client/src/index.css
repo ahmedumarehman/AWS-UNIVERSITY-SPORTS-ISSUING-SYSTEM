@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+	html {
+		scroll-behavior: smooth;
+	}
+
+	body {
+		@apply bg-slate-100 text-slate-800 antialiased;
+	}
+}
+
+@layer utilities {
+	::-webkit-scrollbar {
+		width: 10px;
+	}
+
+	::-webkit-scrollbar-track {
+		background: #e2e8f0;
+	}
+
+	::-webkit-scrollbar-thumb {
+		background: #64748b;
+		border-radius: 9999px;
+	}
+
+	::-webkit-scrollbar-thumb:hover {
+		background: #475569;
+	}
+}

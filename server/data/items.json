@@ -1,0 +1,22 @@
+[
+  {
+    "name": "Football",
+    "availableTimeSlots": ["2PM-4PM", "4PM-6PM"]
+  },
+  {
+    "name": "Basketball",
+    "availableTimeSlots": ["2PM-4PM", "4PM-6PM"]
+  },
+  {
+    "name": "Cricket Kit",
+    "availableTimeSlots": ["2PM-4PM", "4PM-6PM"]
+  },
+  {
+    "name": "Badminton",
+    "availableTimeSlots": ["2PM-4PM", "4PM-6PM"]
+  },
+  {
+    "name": "Ludo",
+    "availableTimeSlots": ["2PM-4PM", "4PM-6PM"]
+  }
+]

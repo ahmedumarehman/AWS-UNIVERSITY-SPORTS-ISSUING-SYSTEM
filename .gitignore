@@ -1,0 +1,10 @@
+.venv/
+**/node_modules/
+**/build/
+**/.vercel/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+report_extracted.txt

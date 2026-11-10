@@ -1,33 +1,84 @@
 import React from "react";
-import { Link } from "react-router-dom";
+import { Link, NavLink, useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 
 const Header = () => {
+  const { user, signOut, isAdmin } = useAuth();
+  const navigate = useNavigate();
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      navigate("/", { replace: true });
+    } catch (error) {
+      console.error("Sign out error:", error.message);
+    }
+  };
+
+  const navClass = ({ isActive }) =>
+    `text-sm font-semibold transition-colors hover:text-blue-700 ${
+      isActive ? "text-blue-700" : "text-slate-600"
+    }`;
+
+  const dashboardPath = isAdmin ? "/admin" : "/dashboard";
+
   return (
-    <header className="sticky top-0 z-40 border-b border-slate-700/40 bg-slate-900/95 text-white shadow-lg backdrop-blur">
-      <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
-        <div className="text-2xl font-extrabold tracking-tight transition-transform duration-200 hover:scale-[1.01]">
-          <span className="bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">FAST</span>{" "}
-          Sports System
-        </div>
-        <nav>
-          <ul className="flex items-center space-x-2 sm:space-x-4">
-            <li>
-              <Link
-                to="/dashboard"
-                className="rounded-md px-3 py-2 text-sm font-semibold text-slate-100 transition-all duration-200 hover:bg-slate-700/60 hover:text-cyan-300"
+    <header className="sticky top-0 z-50 border-b border-slate-200 bg-white">
+      <div className="page-container flex min-h-[82px] items-center justify-between gap-3">
+        {/* BRANDING */}
+
+        <Link
+          to={user ? dashboardPath : "/"}
+          className="flex shrink-0 items-center gap-3"
+        >
+          <img
+            src="/assets/fast-logo.png"
+            alt="FAST-NUCES Official Logo"
+            className="h-14 w-14 object-contain"
+          />
+
+          <div>
+            <div className="text-lg font-extrabold tracking-tight text-[#142b4a]">
+              FAST <span className="font-medium text-[#2878d0]">SPORTS</span>
+            </div>
+
+            <p className="text-[9px] font-bold uppercase tracking-[0.19em] text-slate-500">
+              Sports & Recreation
+            </p>
+          </div>
+        </Link>
+
+        {/* ROLE-BASED NAVIGATION */}
+
+        <nav className="flex items-center gap-3 sm:gap-5">
+          {user && (
+            <NavLink
+              to={isAdmin ? "/admin" : "/my-bookings"}
+              className={navClass}
+            >
+              {isAdmin ? "Admin Portal" : "My Bookings"}
+            </NavLink>
+          )}
+
+          {user ? (
+            <>
+              <span className="hidden max-w-[180px] truncate text-xs font-medium text-slate-500 lg:block">
+                {user.email}
+              </span>
+
+              <button
+                type="button"
+                onClick={handleSignOut}
+                className="btn-primary !px-4 !py-2.5 sm:!px-5"
               >
-                Home
-              </Link>
-            </li>
-            <li>
-              <Link
-                to="/"
-                className="rounded-md border border-slate-500/40 bg-slate-800/70 px-3 py-2 text-sm font-semibold text-slate-100 transition-all duration-200 hover:border-cyan-400/50 hover:bg-slate-700 hover:text-cyan-300"
-              >
-                Login
-              </Link>
-            </li>
-          </ul>
+                Sign out
+              </button>
+            </>
+          ) : (
+            <Link to="/" className="btn-primary !px-5 !py-2.5">
+              Sign in
+            </Link>
+          )}
         </nav>
       </div>
     </header>

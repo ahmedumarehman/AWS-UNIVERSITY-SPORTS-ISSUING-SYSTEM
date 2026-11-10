@@ -1,32 +1,170 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700;800&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-	html {
-		scroll-behavior: smooth;
-	}
-
-	body {
-		@apply bg-slate-100 text-slate-800 antialiased;
-	}
+:root {
+  --navy: #142b4a;
+  --blue: #2878d0;
+  --blue-dark: #1d5fa9;
+  --background: #f5f7fa;
+  --surface: #ffffff;
+  --text: #202d3e;
+  --muted: #718096;
+  --border: #e4e9f0;
+  --green: #268568;
 }
 
-@layer utilities {
-	::-webkit-scrollbar {
-		width: 10px;
-	}
+* {
+  box-sizing: border-box;
+}
 
-	::-webkit-scrollbar-track {
-		background: #e2e8f0;
-	}
+html {
+  scroll-behavior: smooth;
+}
 
-	::-webkit-scrollbar-thumb {
-		background: #64748b;
-		border-radius: 9999px;
-	}
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--text);
+  font-family: "DM Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
 
-	::-webkit-scrollbar-thumb:hover {
-		background: #475569;
-	}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: #d8eaff;
+  color: var(--navy);
+}
+
+a {
+  text-decoration: none;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid rgba(40, 120, 208, 0.3);
+  outline-offset: 3px;
+}
+
+@layer components {
+  .page-container {
+    @apply mx-auto w-full max-w-7xl px-5 sm:px-8 lg:px-10;
+  }
+
+  .section-label {
+    @apply text-xs font-bold uppercase tracking-[0.18em] text-blue-700;
+  }
+
+  .page-heading {
+    @apply text-3xl font-bold tracking-tight text-[#142b4a] sm:text-4xl;
+  }
+
+  .card {
+    @apply rounded-xl border border-[#e4e9f0] bg-white shadow-sm;
+  }
+
+  .form-input {
+    @apply w-full rounded-lg border border-[#dce3ec] bg-white
+      px-4 py-3 text-sm text-[#202d3e]
+      placeholder:text-slate-400
+      transition-all duration-200
+      hover:border-slate-400
+      focus:border-blue-500 focus:outline-none
+      focus:ring-4 focus:ring-blue-100;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-lg
+      bg-[#2878d0] px-5 py-3 text-sm font-bold text-white
+      transition-all duration-200
+      hover:-translate-y-0.5 hover:bg-[#1d5fa9]
+      hover:shadow-lg hover:shadow-blue-900/10
+      active:translate-y-0
+      disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-lg
+      border border-[#dce3ec] bg-white px-5 py-3
+      text-sm font-semibold text-[#142b4a]
+      transition-all duration-200
+      hover:border-blue-400 hover:bg-blue-50;
+  }
+}
+
+.sports-hero {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(15, 37, 65, 0.94) 0%,
+      rgba(15, 37, 65, 0.78) 48%,
+      rgba(15, 37, 65, 0.12) 100%
+    ),
+    url("https://images.unsplash.com/photo-1461896836934-ffe607ba8211?auto=format&fit=crop&w=1800&q=85");
+
+  background-position: center;
+  background-size: cover;
+}
+
+.login-image {
+  background:
+    linear-gradient(90deg, rgba(20, 43, 74, 0.85), rgba(20, 43, 74, 0.2)),
+    url("https://images.unsplash.com/photo-1517649763962-0c623066013b?auto=format&fit=crop&w=1200&q=85");
+
+  background-position: center;
+  background-size: cover;
+}
+
+.sport-image {
+  transition: transform 500ms ease;
+}
+
+.sport-card:hover .sport-image {
+  transform: scale(1.045);
+}
+
+::placeholder {
+  opacity: 1;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f3f6;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c5ced9;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #8b9aab;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

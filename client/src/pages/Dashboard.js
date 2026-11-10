@@ -1,461 +1,499 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { Link } from "react-router-dom";
-import axios from "axios";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, Navigate } from "react-router-dom";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../context/AuthContext";
+
+// Get today's date using Pakistan Standard Time.
+const getTodayDate = () => {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Karachi",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  const values = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+
+  return `${values.year}-${values.month}-${values.day}`;
+};
+
+// Format date as DD/MM/YYYY.
+const formatDate = (date) => {
+  if (!date) return "Date not configured";
+
+  const [year, month, day] = date.split("-");
+  return `${day}/${month}/${year}`;
+};
+
+// Format time as 12-hour clock.
+const formatTime = (time) => {
+  if (!time) return "";
+
+  const [hours, minutes] = time.split(":");
+  const hour = Number(hours);
+  const suffix = hour >= 12 ? "PM" : "AM";
+
+  return `${hour % 12 || 12}:${minutes} ${suffix}`;
+};
+
+// Format booking creation time.
+const formatBookingTime = (dateTime) => {
+  if (!dateTime) return "Time unavailable";
+
+  const parsed = new Date(dateTime);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return "Time unavailable";
+  }
+
+  return parsed.toLocaleString("en-PK", {
+    timeZone: "Asia/Karachi",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+};
+
+// Check whether a schedule has ended.
+const isSlotStillAvailableByTime = (slot) => {
+  if (!slot.slot_date || !slot.end_time) {
+    return false;
+  }
+
+  const endDateTime = new Date(`${slot.slot_date}T${slot.end_time}+05:00`);
+
+  return !Number.isNaN(endDateTime.getTime()) && endDateTime > new Date();
+};
 
 const Dashboard = () => {
+  const { isAdmin } = useAuth();
+
   const [items, setItems] = useState([]);
+  const [schedules, setSchedules] = useState([]);
+  const [windowSlots, setWindowSlots] = useState([]);
   const [bookings, setBookings] = useState([]);
+
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
-  const [adminError, setAdminError] = useState("");
-  const [adminNotice, setAdminNotice] = useState("");
-  const [adminRefreshing, setAdminRefreshing] = useState(false);
-  const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
-  const [updatingBookingId, setUpdatingBookingId] = useState(null);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedSlot, setSelectedSlot] = useState("all");
 
-  const fetchDashboardData = useCallback(async (showGlobalLoader = false) => {
-    if (showGlobalLoader) {
-      setLoading(true);
-    } else {
-      setAdminRefreshing(true);
+  // Fetch sports items, schedule assignments, time slots and bookings.
+  const fetchDashboardData = useCallback(async (isRefresh = false) => {
+    try {
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      setError("");
+
+      const [itemsResult, schedulesResult, slotsResult] = await Promise.all([
+        supabase
+          .from("sports_items")
+          .select("id, item_name, item_code, condition_status, is_active")
+          .eq("is_active", true)
+          .eq("condition_status", "good")
+          .order("item_name", { ascending: true }),
+
+        supabase
+          .from("sports_item_schedules")
+          .select("id, sports_item_id, time_slot_id, is_active")
+          .eq("is_active", true),
+
+        supabase
+          .from("time_slots")
+          .select("id, slot_name, slot_date, start_time, end_time, is_active")
+          .eq("is_active", true)
+          .order("slot_date", { ascending: true })
+          .order("start_time", { ascending: true }),
+      ]);
+
+      if (itemsResult.error) throw itemsResult.error;
+      if (schedulesResult.error) throw schedulesResult.error;
+      if (slotsResult.error) throw slotsResult.error;
+
+      const activeItems = itemsResult.data || [];
+      const activeSchedules = schedulesResult.data || [];
+      const activeSlots = slotsResult.data || [];
+
+      const today = getTodayDate();
+
+      // Keep only upcoming schedules.
+      const upcomingSlots = activeSlots.filter(
+        (slot) =>
+          slot.slot_date &&
+          slot.slot_date >= today &&
+          isSlotStillAvailableByTime(slot),
+      );
+
+      // Fetch public booking information for each upcoming date.
+      const uniqueDates = [
+        ...new Set(upcomingSlots.map((slot) => slot.slot_date)),
+      ];
+
+      const bookingResults = await Promise.all(
+        uniqueDates.map((date) =>
+          supabase.rpc("get_public_sports_item_bookings", {
+            p_booking_date: date,
+          }),
+        ),
+      );
+
+      const allBookings = [];
+
+      bookingResults.forEach((result) => {
+        if (result.error) throw result.error;
+
+        if (Array.isArray(result.data)) {
+          allBookings.push(...result.data);
+        }
+      });
+
+      setItems(activeItems);
+      setSchedules(activeSchedules);
+      setWindowSlots(upcomingSlots);
+      setBookings(allBookings);
+    } catch (err) {
+      console.error("Student dashboard loading error:", err);
+      setError(err.message || "Unable to load available sports items.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
-
-    setError("");
-    setAdminError("");
-
-    const [itemsResult, bookingsResult] = await Promise.allSettled([
-      axios.get("http://3.231.204.101:5001/api/items"),
-      axios.get("http://3.231.204.101:5001/api/bookings"),
-    ]);
-
-    if (itemsResult.status === "fulfilled") {
-      setItems(itemsResult.value.data || []);
-    } else {
-      setError("Unable to load sports items. Please refresh the page.");
-    }
-
-    if (bookingsResult.status === "fulfilled") {
-      setBookings(Array.isArray(bookingsResult.value.data) ? bookingsResult.value.data : []);
-    } else {
-      setAdminError("Admin metrics are temporarily unavailable.");
-    }
-
-    setLastRefreshedAt(new Date());
-
-    setLoading(false);
-    setAdminRefreshing(false);
   }, []);
 
   useEffect(() => {
-    fetchDashboardData(true);
-  }, [fetchDashboardData]);
-
-  useEffect(() => {
-    if (!adminNotice) {
-      return undefined;
+    if (!isAdmin) {
+      fetchDashboardData();
     }
+  }, [fetchDashboardData, isAdmin]);
 
-    const noticeTimer = setTimeout(() => {
-      setAdminNotice("");
-    }, 2500);
+  // Find bookings using sports item ID and time slot ID.
+  const bookingLookup = useMemo(() => {
+    const lookup = {};
 
-    return () => clearTimeout(noticeTimer);
-  }, [adminNotice]);
+    bookings.forEach((booking) => {
+      const key = `${booking.sports_item_id}_${booking.time_slot_id}`;
+      lookup[key] = booking;
+    });
 
-  useEffect(() => {
-    if (!adminError) {
-      return undefined;
-    }
+    return lookup;
+  }, [bookings]);
 
-    const errorTimer = setTimeout(() => {
-      setAdminError("");
-    }, 3500);
+  // Build one card per sports item.
+  // Each card contains all upcoming schedules assigned to that item.
+  const sportsItemsWithSchedules = useMemo(() => {
+    const slotMap = new Map(windowSlots.map((slot) => [slot.id, slot]));
 
-    return () => clearTimeout(errorTimer);
-  }, [adminError]);
+    const schedulesByItem = new Map();
 
-  const allSlots = [...new Set(items.flatMap((item) => item.availableTimeSlots || []))];
+    schedules.forEach((assignment) => {
+      if (!assignment.is_active) return;
 
-  const filteredItems = items.filter((item) => {
-    const matchesSearch = item.name.toLowerCase().includes(searchTerm.trim().toLowerCase());
-    const matchesSlot = selectedSlot === "all" || item.availableTimeSlots.includes(selectedSlot);
-    return matchesSearch && matchesSlot;
-  });
+      const slot = slotMap.get(assignment.time_slot_id);
 
-  const totalSlots = items.reduce((sum, item) => sum + item.availableTimeSlots.length, 0);
-  const isToday = (dateValue) => {
-    const date = new Date(dateValue);
-    const today = new Date();
+      if (!slot) return;
 
-    if (Number.isNaN(date.getTime())) {
-      return false;
-    }
+      if (!schedulesByItem.has(assignment.sports_item_id)) {
+        schedulesByItem.set(assignment.sports_item_id, []);
+      }
 
-    return (
-      date.getDate() === today.getDate() &&
-      date.getMonth() === today.getMonth() &&
-      date.getFullYear() === today.getFullYear()
-    );
-  };
+      const existing = schedulesByItem.get(assignment.sports_item_id);
 
-  const todaysBookingsCount = bookings.filter((booking) => isToday(booking.bookingTime)).length;
-  const lateReturnsCount = bookings.filter((booking) => booking.returnStatus === "Late").length;
-  const recentBookings = [...bookings]
-    .filter((booking) => booking.bookingTime)
-    .sort((firstBooking, secondBooking) => new Date(secondBooking.bookingTime) - new Date(firstBooking.bookingTime))
-    .slice(0, 5);
+      // Prevent duplicate schedule entries.
+      if (!existing.some((entry) => entry.id === slot.id)) {
+        existing.push(slot);
+      }
+    });
 
-  const formatBookingDate = (dateValue) => {
-    const date = new Date(dateValue);
+    return items.map((item) => {
+      const itemSchedules = schedulesByItem.get(item.id) || [];
 
-    if (Number.isNaN(date.getTime())) {
-      return "N/A";
-    }
+      itemSchedules.sort((a, b) => {
+        return (
+          a.slot_date.localeCompare(b.slot_date) ||
+          a.start_time.localeCompare(b.start_time)
+        );
+      });
 
-    return date.toLocaleString();
-  };
+      return {
+        ...item,
+        upcomingSchedules: itemSchedules,
+      };
+    });
+  }, [items, schedules, windowSlots]);
 
-  const formattedLastRefreshTime = lastRefreshedAt
-    ? lastRefreshedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-    : "--:--:--";
-
-  const statusBadgeClassName = (status) => {
-    if (status === "Late") {
-      return "bg-amber-100 text-amber-700 border-amber-200";
-    }
-
-    if (status === "Returned") {
-      return "bg-emerald-100 text-emerald-700 border-emerald-200";
-    }
-
-    return "bg-blue-100 text-blue-700 border-blue-200";
-  };
-
-  const escapeCsvValue = (value) => {
-    const rawValue = value ?? "";
-    const stringValue = String(rawValue).replace(/"/g, '""');
-    return `"${stringValue}"`;
-  };
-
-  const buildBookingsCsv = (bookingsToExport) => {
-    const header = [
-      "ID",
-      "Full Name",
-      "Roll Number",
-      "Email",
-      "Contact Number",
-      "Item",
-      "Time Slot",
-      "Booking Time",
-      "Return Status",
-      "Return Time",
-    ];
-
-    const rows = bookingsToExport.map((booking) => [
-      booking.id,
-      booking.fullName,
-      booking.rollNumber,
-      booking.email,
-      booking.contactNumber,
-      booking.itemName,
-      booking.timeSlot,
-      booking.bookingTime,
-      booking.returnStatus || "Booked",
-      booking.returnTime || "",
-    ]);
-
-    return [header, ...rows]
-      .map((row) => row.map((value) => escapeCsvValue(value)).join(","))
-      .join("\n");
-  };
-
-  const downloadCsvFile = (fileName, bookingsToExport) => {
-    if (!bookingsToExport.length) {
-      setAdminError("No bookings available to export.");
-      return;
-    }
-
-    const csvContent = buildBookingsCsv(bookingsToExport);
-    const csvBlob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const csvUrl = URL.createObjectURL(csvBlob);
-    const downloadLink = document.createElement("a");
-    downloadLink.href = csvUrl;
-    downloadLink.setAttribute("download", fileName);
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-    document.body.removeChild(downloadLink);
-    URL.revokeObjectURL(csvUrl);
-    setAdminNotice("CSV exported successfully.");
-  };
-
-  const handleMarkReturned = async (bookingId) => {
-    try {
-      setUpdatingBookingId(bookingId);
-      setAdminError("");
-      setAdminNotice("");
-
-      await axios.patch(`http://3.231.204.101:5001/api/bookings/${bookingId}/return`);
-
-      setBookings((previousBookings) =>
-        previousBookings.map((booking) =>
-          String(booking.id) === String(bookingId)
-            ? {
-                ...booking,
-                returnStatus: "Returned",
-                returnTime: new Date().toISOString(),
-              }
-            : booking
-        )
-      );
-
-      setAdminNotice("Booking marked as Returned successfully.");
-    } catch (requestError) {
-      setAdminError(requestError?.response?.data?.message || "Failed to mark booking as Returned.");
-    } finally {
-      setUpdatingBookingId(null);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-md">
-        <p className="text-sm font-medium text-slate-500">Loading dashboard...</p>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-2xl border border-red-200 bg-red-50 p-8 shadow-md">
-        <p className="text-sm font-semibold text-red-600">{error}</p>
-      </div>
-    );
+  // Administrators use the separate Admin Portal.
+  if (isAdmin) {
+    return <Navigate to="/admin" replace />;
   }
 
   return (
-    <section className="space-y-6">
-      <div aria-live="polite" className="pointer-events-none fixed right-5 top-20 z-50 flex w-full max-w-sm flex-col gap-3">
-        {adminNotice && (
-          <div className="pointer-events-auto flex items-start justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 shadow-lg transition-all duration-300">
-            <p>{adminNotice}</p>
-            <button
-              type="button"
-              onClick={() => setAdminNotice("")}
-              className="rounded px-1 text-emerald-700 transition-colors hover:bg-emerald-100"
-              aria-label="Close success message"
-            >
-              ×
-            </button>
-          </div>
-        )}
+    <div className="page-container py-8 sm:py-10">
+      {/* PAGE HEADER */}
 
-        {adminError && (
-          <div className="pointer-events-auto flex items-start justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 shadow-lg transition-all duration-300">
-            <p>{adminError}</p>
-            <button
-              type="button"
-              onClick={() => setAdminError("")}
-              className="rounded px-1 text-red-700 transition-colors hover:bg-red-100"
-              aria-label="Close error message"
-            >
-              ×
-            </button>
-          </div>
-        )}
-      </div>
-
-      <div className="rounded-2xl bg-gradient-to-r from-slate-900 to-blue-900 p-6 text-white shadow-xl">
-        <h2 className="text-3xl font-extrabold tracking-tight">Sports Booking Dashboard</h2>
-        <p className="mt-1 text-sm text-blue-100">View items, explore available timings, and book in one click.</p>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Items</p>
-          <p className="mt-2 text-2xl font-extrabold text-slate-900">{items.length}</p>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Slots</p>
-          <p className="mt-2 text-2xl font-extrabold text-slate-900">{totalSlots}</p>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Matching Items</p>
-          <p className="mt-2 text-2xl font-extrabold text-slate-900">{filteredItems.length}</p>
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 to-blue-50 p-5 shadow-md">
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-extrabold text-indigo-900">Quick Admin Panel</h3>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <span className="rounded-md bg-white/80 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-              Last refreshed: {formattedLastRefreshTime}
-            </span>
-            <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-bold uppercase tracking-wide text-indigo-700">Live</span>
-            <button
-              type="button"
-              onClick={() => downloadCsvFile("recent-bookings.csv", recentBookings)}
-              className="rounded-md border border-indigo-200 bg-white px-3 py-1 text-xs font-bold uppercase tracking-wide text-indigo-700 transition-colors hover:bg-indigo-100"
-            >
-              Export Recent CSV
-            </button>
-            <button
-              type="button"
-              onClick={() => downloadCsvFile("all-bookings.csv", bookings)}
-              className="rounded-md border border-indigo-200 bg-white px-3 py-1 text-xs font-bold uppercase tracking-wide text-indigo-700 transition-colors hover:bg-indigo-100"
-            >
-              Export All CSV
-            </button>
-            <button
-              type="button"
-              onClick={() => fetchDashboardData(false)}
-              disabled={adminRefreshing || loading}
-              className="rounded-md border border-indigo-200 bg-white px-3 py-1 text-xs font-bold uppercase tracking-wide text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {adminRefreshing ? "Refreshing..." : "Refresh"}
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="rounded-xl border border-indigo-100 bg-white p-4 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Today's Bookings</p>
-            <p className="mt-2 text-3xl font-extrabold text-indigo-700">{todaysBookingsCount}</p>
-          </div>
-
-          <div className="rounded-xl border border-amber-100 bg-white p-4 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Late Returns</p>
-            <p className="mt-2 text-3xl font-extrabold text-amber-600">{lateReturnsCount}</p>
-          </div>
-        </div>
-
-        <div className="mt-5 overflow-hidden rounded-xl border border-indigo-100 bg-white shadow-sm">
-          <div className="border-b border-indigo-100 bg-indigo-50/70 px-4 py-3">
-            <h4 className="text-sm font-bold uppercase tracking-wide text-indigo-900">Recent 5 Bookings</h4>
-          </div>
-
-          {recentBookings.length ? (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-200">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Student</th>
-                    <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Item</th>
-                    <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Slot</th>
-                    <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Booked At</th>
-                    <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Status</th>
-                    <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {recentBookings.map((booking) => (
-                    <tr key={booking.id} className="transition-colors hover:bg-slate-50">
-                      <td className="whitespace-nowrap px-4 py-3 text-sm font-semibold text-slate-700">{booking.fullName}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">{booking.itemName}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">{booking.timeSlot}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-600">{formatBookingDate(booking.bookingTime)}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-sm">
-                        <span
-                          className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold ${statusBadgeClassName(
-                            booking.returnStatus
-                          )}`}
-                        >
-                          {booking.returnStatus || "Booked"}
-                        </span>
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-sm">
-                        <button
-                          type="button"
-                          onClick={() => handleMarkReturned(booking.id)}
-                          disabled={booking.returnStatus === "Returned" || updatingBookingId === booking.id}
-                          className="inline-flex items-center justify-center rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white transition-all duration-200 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600"
-                        >
-                          {updatingBookingId === booking.id ? "Updating..." : booking.returnStatus === "Returned" ? "Returned" : "Mark Returned"}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="px-4 py-4 text-sm font-medium text-slate-500">No bookings found yet.</p>
-          )}
-        </div>
-
-      </div>
-
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-md">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <section className="mb-10">
+        <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
           <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Search by item</label>
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search sports item..."
-              className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm text-slate-700 shadow-sm transition-all duration-200 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100"
-            />
-          </div>
-          <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Filter by slot</label>
-            <select
-              value={selectedSlot}
-              onChange={(e) => setSelectedSlot(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm text-slate-700 shadow-sm transition-all duration-200 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100"
-            >
-              <option value="all">All slots</option>
-              {allSlots.map((slot) => (
-                <option key={slot} value={slot}>
-                  {slot}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
+            <p className="section-label">SPORTS ITEM AVAILABILITY</p>
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
-        {filteredItems.map((item) => (
-          <article
-            key={item.name}
-            className="group rounded-2xl border border-slate-200 bg-white p-6 shadow-md transition-all duration-300 hover:-translate-y-1 hover:border-blue-300 hover:shadow-xl"
+            <h1 className="page-heading mt-2">Available Sports Items</h1>
+
+            <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-500">
+              Explore registered sports items, check their upcoming schedules,
+              and reserve an available item.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => fetchDashboardData(true)}
+            disabled={loading || refreshing}
+            className="rounded-lg border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
           >
-            <div className="mb-4 flex items-start justify-between gap-2">
-              <h3 className="text-xl font-bold text-slate-800 transition-colors group-hover:text-blue-700">{item.name}</h3>
-              <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Available</span>
-            </div>
+            {refreshing ? "Refreshing..." : "Refresh availability"}
+          </button>
+        </div>
+      </section>
 
-            <p className="mb-3 text-sm font-semibold text-slate-600">Available Timings</p>
-            <div className="mb-6 flex flex-wrap gap-2">
-              {item.availableTimeSlots.map((slot) => (
-                <span
-                  key={slot}
-                  className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 transition-colors duration-200 group-hover:bg-blue-100"
-                >
-                  {slot}
-                </span>
-              ))}
-            </div>
+      {/* LOADING STATE */}
 
-            <Link
-              to={`/book/${item.name}`}
-              className="inline-flex w-full items-center justify-center rounded-lg bg-gradient-to-r from-blue-600 to-cyan-500 px-4 py-2.5 text-sm font-bold text-white shadow-md transition-all duration-300 hover:-translate-y-0.5 hover:from-blue-700 hover:to-cyan-600 hover:shadow-lg focus:outline-none focus:ring-4 focus:ring-blue-200"
-            >
-              Book Now
-            </Link>
-          </article>
-        ))}
-      </div>
-
-      {!filteredItems.length && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
-          <p className="text-sm font-medium text-slate-500">No items match your current search/filter.</p>
+      {loading && (
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+          {[1, 2, 3].map((number) => (
+            <div
+              key={number}
+              className="h-96 animate-pulse rounded-2xl bg-slate-200"
+            />
+          ))}
         </div>
       )}
-    </section>
+
+      {/* ERROR STATE */}
+
+      {!loading && error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-6">
+          <h3 className="font-bold text-red-800">
+            Unable to load sports availability
+          </h3>
+
+          <p className="mt-2 text-sm text-red-700">{error}</p>
+
+          <button
+            type="button"
+            onClick={() => fetchDashboardData()}
+            className="mt-4 rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+
+      {/* SPORTS ITEMS GRID */}
+
+      {!loading && !error && (
+        <section>
+          <div className="mb-6 flex items-end justify-between gap-4">
+            <div>
+              <p className="section-label">AVAILABLE INVENTORY</p>
+
+              <h2 className="page-heading mt-2">Explore Sports Items</h2>
+
+              <p className="mt-2 text-sm text-slate-500">
+                Select an item to view its details and booking options.
+              </p>
+            </div>
+
+            <span className="shrink-0 text-sm font-semibold text-slate-500">
+              {sportsItemsWithSchedules.length} items
+            </span>
+          </div>
+
+          {sportsItemsWithSchedules.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center">
+              <h3 className="font-bold text-[#142b4a]">
+                No sports items available
+              </h3>
+
+              <p className="mt-2 text-sm text-slate-500">
+                There are currently no active sports items available for
+                booking.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 items-stretch gap-6 md:grid-cols-2 xl:grid-cols-3">
+              {sportsItemsWithSchedules.map((item) => (
+                <article
+                  key={item.id}
+                  className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg"
+                >
+                  {/* ITEM INFORMATION */}
+
+                  <div className="flex flex-1 flex-col p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <h3 className="text-xl font-bold text-[#142b4a]">
+                        {item.item_name}
+                      </h3>
+
+                      <span className="shrink-0 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold uppercase text-emerald-700">
+                        {item.condition_status}
+                      </span>
+                    </div>
+
+                    <p className="mt-2 text-xs font-semibold text-slate-500">
+                      Item Code: {item.item_code}
+                    </p>
+
+                    <div className="my-5 border-t border-slate-100" />
+
+                    {/* UPCOMING SCHEDULES */}
+
+                    <div className="flex-1">
+                      <h4 className="mb-3 text-sm font-bold text-[#142b4a]">
+                        Upcoming Booking Schedules
+                      </h4>
+
+                      {item.upcomingSchedules.length === 0 ? (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                          <p className="text-sm text-slate-500">
+                            No upcoming schedules available for this item.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {item.upcomingSchedules.map((slot) => {
+                            const bookingKey = `${item.id}_${slot.id}`;
+
+                            const booking = bookingLookup[bookingKey];
+
+                            const isBooked = Boolean(booking);
+
+                            return (
+                              <div
+                                key={slot.id}
+                                className={`rounded-lg border p-4 ${
+                                  isBooked
+                                    ? "border-red-100 bg-red-50"
+                                    : "border-emerald-100 bg-emerald-50"
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-sm font-bold text-[#142b4a]">
+                                    {formatDate(slot.slot_date)}
+                                  </span>
+
+                                  <span
+                                    className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${
+                                      isBooked
+                                        ? "bg-red-100 text-red-700"
+                                        : "bg-emerald-100 text-emerald-700"
+                                    }`}
+                                  >
+                                    {isBooked ? "Booked" : "Available"}
+                                  </span>
+                                </div>
+
+                                <p className="mt-2 text-sm font-medium text-slate-700">
+                                  {formatTime(slot.start_time)}
+                                  {" – "}
+                                  {formatTime(slot.end_time)}
+                                </p>
+
+                                {slot.slot_name && (
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    {slot.slot_name}
+                                  </p>
+                                )}
+
+                                {isBooked ? (
+                                  <div className="mt-3 border-t border-red-200 pt-3">
+                                    <p className="text-xs font-semibold text-slate-700">
+                                      Reserved by roll number:
+                                    </p>
+
+                                    <p className="mt-1 text-sm font-bold text-red-700">
+                                      {booking.roll_number || "Not available"}
+                                    </p>
+
+                                    <p className="mt-2 text-xs text-slate-500">
+                                      Booking time:{" "}
+                                      {formatBookingTime(booking.booked_at)}
+                                    </p>
+
+                                    <p className="mt-2 text-xs text-red-600">
+                                      This item is unavailable for this
+                                      schedule.
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <p className="mt-2 text-xs font-medium text-emerald-700">
+                                    This schedule is available for reservation.
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* BOOKING ACTION */}
+
+                    <div className="mt-5 border-t border-slate-100 pt-5">
+                      {item.upcomingSchedules.some(
+                        (slot) => !bookingLookup[`${item.id}_${slot.id}`],
+                      ) ? (
+                        <Link
+                          to={`/book/${encodeURIComponent(item.item_name)}`}
+                          className="inline-flex w-full items-center justify-center rounded-lg bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700"
+                        >
+                          View Details & Book →
+                        </Link>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled
+                          className="w-full cursor-not-allowed rounded-lg bg-slate-200 px-4 py-3 text-sm font-bold text-slate-500"
+                        >
+                          Currently Unavailable
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* MY BOOKINGS */}
+
+      <section className="mt-10 rounded-xl border border-blue-100 bg-blue-50 p-6 sm:flex sm:items-center sm:justify-between">
+        <div>
+          <h3 className="text-lg font-bold text-[#142b4a]">
+            Manage your reservations
+          </h3>
+
+          <p className="mt-2 text-sm text-slate-600">
+            View your confirmed bookings and reservation history.
+          </p>
+        </div>
+
+        <Link
+          to="/my-bookings"
+          className="mt-4 inline-flex rounded-lg bg-blue-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-blue-700 sm:mt-0"
+        >
+          My Bookings →
+        </Link>
+      </section>
+    </div>
   );
 };
 
